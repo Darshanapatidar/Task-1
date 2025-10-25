@@ -1,1 +1,81 @@
+import json
+import pytest
+from app import create_app
+from models import db, Task, Comment
+from config import TestConfig
 
+
+@pytest.fixture
+def app():
+app = create_app(config_class=TestConfig)
+with app.app_context():
+db.create_all()
+# seed a task
+t = Task(title='Task for tests')
+db.session.add(t)
+db.session.commit()
+yield app
+# teardown
+with app.app_context():
+db.drop_all()
+
+
+@pytest.fixture
+def client(app):
+return app.test_client()
+
+
+def test_create_comment(client, app):
+# create a comment
+rv = client.post('/tasks/1/comments', json={'body': 'Hello', 'author': 'Alice'})
+assert rv.status_code == 201
+data = rv.get_json()
+assert data['body'] == 'Hello'
+assert data['author'] == 'Alice'
+
+
+def test_list_comments(client):
+# create two comments
+client.post('/tasks/1/comments', json={'body': 'First', 'author': 'A'})
+client.post('/tasks/1/comments', json={'body': 'Second', 'author': 'B'})
+rv = client.get('/tasks/1/comments')
+assert rv.status_code == 200
+data = rv.get_json()
+assert isinstance(data, list) and len(data) == 2
+
+
+def test_get_comment(client):
+r = client.post('/tasks/1/comments', json={'body': 'X'})
+cid = r.get_json()['id']
+rv = client.get(f'/tasks/1/comments/{cid}')
+assert rv.status_code == 200
+assert rv.get_json()['body'] == 'X'
+
+
+def test_update_comment(client):
+r = client.post('/tasks/1/comments', json={'body': 'before'})
+cid = r.get_json()['id']
+rv = client.put(f'/tasks/1/comments/{cid}', json={'body': 'after', 'author': 'Z'})
+assert rv.status_code == 200
+data = rv.get_json()
+assert data['body'] == 'after' and data['author'] == 'Z'
+
+
+def test_delete_comment(client):
+r = client.post('/tasks/1/comments', json={'body': 'bye'})
+cid = r.get_json()['id']
+rv = client.delete(f'/tasks/1/comments/{cid}')
+assert rv.status_code == 200
+# subsequent GET should 404
+rv2 = client.get(f'/tasks/1/comments/{cid}')
+assert rv2.status_code == 404
+
+
+def test_create_comment_missing_body(client):
+rv = client.post('/tasks/1/comments', json={'author': 'no body'})
+assert rv.status_code == 400
+
+
+def test_task_not_found(client):
+rv = client.get('/tasks/999/comments')
+assert rv.status_code == 404
